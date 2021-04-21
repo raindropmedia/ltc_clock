@@ -17,16 +17,56 @@
 float fps = 25;
 const int ltcPin = 0;
 const int ltcInvPin = 1;
-const int syncPin = 4;
+const int syncPin = 33;
 const int syncInterval = 30;
 elapsedMillis lastSync;
 elapsedMillis lastDisplayUpdate;
-bool initsync;
+bool initsync, counterrun, counterpaused;
+bool colonVisible = false;    
 float infps;
-byte mode;
+byte countermode, lastsecond;
+const int clockPin = 3;
+const int upPin = 4;
+const int downPin = 5;
+const int hourPin = 6;
+const int minutePin = 7;
+const int secondPin = 8;
+const int startPin = 9;
+const int pausePin = 10;
+const int stopPin = 11;
+
+const int clockLedPin = 12;
+const int upLedPin = 13;
+const int downLedPin = 15;
+const int hourLedPin = 16;
+const int minuteLedPin = 17;
+const int secondLedPin = 20;
+const int startLedPin = 21;
+const int pauseLedPin = 22;
+const int stopLedPin = 23;
 
 #include <TimeLib.h>
 #include <TM1637Display.h>
+#include "OneButton.h"
+
+#define SEG_A   0b00000001
+#define SEG_B   0b00000010
+#define SEG_C   0b00000100
+#define SEG_D   0b00001000
+#define SEG_E   0b00010000
+#define SEG_F   0b00100000
+#define SEG_G   0b01000000
+#define SEG_DP  0b10000000
+
+OneButton clockbutton(clockPin);  // 10 ms debounce
+OneButton upbutton(upPin);  // 10 ms debounce
+OneButton downbutton(downPin);  // 10 ms debounce
+OneButton hourbutton(hourPin);  // 10 ms debounce
+OneButton minutebutton(minutePin);  // 10 ms debounce
+OneButton secondbutton(secondPin);  // 10 ms debounce
+OneButton startbutton(startPin);  // 10 ms debounce
+OneButton pausebutton(pausePin);  // 10 ms debounce
+OneButton stopbutton(stopPin);  // 10 ms debounce
 
 #define CLK 19
 #define DIO 18
@@ -41,7 +81,7 @@ AudioInputUSB            usb1;           //xy=386,450
 AudioInputAnalog         adc1;
 AudioAnalyzeLTC          ltc1;
 //AudioConnection          patchCord2(adc1, 0, ltc1, 0);
-AudioConnection          patchCord2(usb1, 0, ltc1, 0);
+AudioConnection          patchCord2(adc1, ltc1);
 
 #else
 struct ltcframe_t {
@@ -54,6 +94,9 @@ IntervalTimer ltcTimer;
 IntervalTimer fpsTimer;
 
 time_t timedestination;
+time_t timediff;
+time_t timestart;
+time_t timepaused;
 
 TM1637Display display(CLK, DIO);
 
@@ -126,6 +169,7 @@ void startLtc() {
 
   int t, t10;
   ltcframe_t ltctemp = ltc;
+
   clkCnt = 0;
 
   //get frame number:
@@ -134,35 +178,91 @@ void startLtc() {
 
   //zero out ltc data, leave  d+c flags and user-bits untouched:
   ltctemp.data &= 0xf0f0f0f0f0f0fcf0ULL;
-  //data = 0;
-  //inc frame-number:
-  //TODO: realize "drop frame numbering" (when D-Flag is set)
-  t++;
-  if (t >= (int) fps) t = 0;
-  //set frame number:
-  //t10 = t / 10;
-  //data |= (t10 & 0x03) << 8; // Seten 10er Frame
-  //data |= ((t - t10 * 10)) << 0; // Seten 1er Frame
+
+  switch (countermode) {
+    case 1:
+      if (counterrun) {
+        if (lastsecond != second()) {
+          lastsecond = second();
+          t = fps;
+        }
+        if (now() > timedestination) {
+          counterrun = false;
+          t = 0;
+          Serial.println("Countdown erreicht!");
+          break;
+        }
+        timediff = timedestination - now(); //Countdown auf def. Zeit
+        t--;
+      }
+      break;
+    case 2:
+      if (counterrun) {
+        if (lastsecond != second()) {
+          lastsecond = second();
+          t = fps;
+        }
+        timediff = timestart - (now() - timedestination); //Countdown auf 0
+        if (timediff < 0) {
+          timediff = 0;
+          t = 0;
+          counterrun = false;
+          Serial.println("Countdown auf 0 erreicht!");
+          break;
+        }
+        //Serial.printf("Start: %d Diff:%d Dest:%d Now:%d\n", timestart, timediff, timedestination, now());
+        t--;
+      }
+      break;
+    case 3:
+      if (counterrun) {
+        t++;
+        if (lastsecond != second()) {
+          lastsecond = second();
+          t = 0;
+        }
+        if (now() > timedestination) {
+          counterrun = false;
+          timediff++;
+          Serial.println("Countup erreicht!");
+          break;
+        }
+        timediff = now() - timestart; //Countup auf def. Zeit
+      }
+      if (t >= (int) fps) t = 0;
+      break;
+    case 4:
+      if (counterrun) {
+        t++;
+        if (lastsecond != second()) {
+          lastsecond = second();
+          t = 0;
+        }
+        if (timediff >= (99 * 3600 + 59 * 60 + 59)) {
+          counterrun = false;
+          t = 0;
+          Serial.println("Countup 99 erreicht!");
+          break;
+        }
+        timediff = now() - timestart; //Countup von 0
+      }
+      if (t >= (int) fps) t = 0;
+      break;
+    default:
+      t++;
+      if (lastsecond != second()) {
+        lastsecond = second();
+        t = 0;
+      }
+      timediff = (hour() * 3600 + minute() * 60 + second() );
+      if (t >= (int) fps) t = 0;
+      break; // Wird nicht benötigt, wenn Statement(s) vorhanden sind
+  }
   ltc1.setframe(&ltctemp, t);
+  ltc1.setsecond(&ltctemp, second(timediff));
+  ltc1.setminute(&ltctemp, minute(timediff));
+  ltc1.sethour(&ltctemp, hour(timediff));
 
-  //set time:
-  t = second();
-  //t10 = t / 10;
-  //data |= (t10 & 0x07) << 24; //Seconds tens
-  //data |= ((t - t10 * 10) & 0x0f) << 16;
-  ltc1.setsecond(&ltctemp, t);
-
-  t = minute();
-  //t10 = t / 10;
-  //data |= (uint64_t)(t10 & 0x07) << 40; //minute tens
-  //data |= (uint64_t)((t - t10 * 10) & 0x0f) << 32;
-  ltc1.setminute(&ltctemp, t);
-
-  t = hour();
-  //t10 = t / 10;
-  //data |= (uint64_t)(t10 & 0x03) << 56; //hour tens
-  //data |= (uint64_t)((t - t10 * 10) & 0x0f) << 48;
-  ltc1.sethour(&ltctemp, t);
 
   //set parity:
   int parity = (!getParity(ltctemp.data)) & 0x01;
@@ -174,6 +274,7 @@ void startLtc() {
 
   ltc = ltctemp;
   //Serial.printf("Out1: %02d:%02d:%02d.%02d\n", ltc1.hour(&ltc), ltc1.minute(&ltc), ltc1.second(&ltc), ltc1.frame(&ltc));
+  //Serial.printf("OutLTC  : %02d:%02d:%02d.%02d\n", ltc1.hour(&ltc), ltc1.minute(&ltc), ltc1.second(&ltc), ltc1.frame(&ltc));
 }
 
 void initLtcData()
@@ -215,9 +316,19 @@ void loop() {
     if (lastDisplayUpdate > 1000) {      // "sincePrint" auto-increases
       lastDisplayUpdate = 0;
       displayTime(&ltc);
-      calcTime(&ltc);
-      Serial.printf("Out: %02d:%02d:%02d\n", hour(), minute(), second());
+      Serial.printf("OutLTC  : %02d:%02d:%02d.%02d\n", ltc1.hour(&ltc), ltc1.minute(&ltc), ltc1.second(&ltc), ltc1.frame(&ltc));
+      //Serial.printf("timeDIFF: %02d:%02d:%02d\n", hour(timediff), minute(timediff), second(timediff));
     }
+    clockbutton.tick();
+    upbutton.tick();
+    downbutton.tick();
+    hourbutton.tick();
+    minutebutton.tick();
+    secondbutton.tick();
+    startbutton.tick();
+    pausebutton.tick();
+    stopbutton.tick();
+
   }
 }
 
@@ -230,17 +341,45 @@ void setup() {
   // All segments on
   display.setSegments(displayFull);
 
-  Teensy3Clock.set(0 * 3600 + 0 * 60 + 0 );
+  Teensy3Clock.set(1 * 3600 + 33 * 60 + 0 );
   //setTime(10 * 3600 + 0 * 60 + 0 );
 
-  timedestination=(12 * 3600 + 12 * 60 + 12 );
-  
+  timedestination = (0 * 3600 + 10 * 60 + 30 );
+
   setTime(0);
   setSyncProvider(getTeensy3Time);
   setSyncInterval(syncInterval);
   pinMode(syncPin, OUTPUT);
   pinMode(ltcPin, OUTPUT);
   pinMode(ltcInvPin, OUTPUT);
+
+  clockbutton.attachClick(setmode, 0);
+
+  upbutton.attachClick(setmode, 1);
+  upbutton.attachLongPressStart(setmode, 2);
+
+  downbutton.attachClick(setmode, 3);
+  downbutton.attachLongPressStart(setmode, 4);
+
+  hourbutton.attachClick(clocksetup);
+  hourbutton.attachLongPressStart(clocksetup);
+  hourbutton.attachLongPressStop(clocksetup);
+  hourbutton.attachDuringLongPress(clocksetup);
+
+  minutebutton.attachClick(clocksetup);
+  minutebutton.attachLongPressStart(clocksetup);
+  minutebutton.attachLongPressStop(clocksetup);
+  minutebutton.attachDuringLongPress(clocksetup);
+
+  secondbutton.attachClick(clocksetup);
+  secondbutton.attachLongPressStart(clocksetup);
+  secondbutton.attachLongPressStop(clocksetup);
+  secondbutton.attachDuringLongPress(clocksetup);
+
+  startbutton.attachClick(controlcounter, 1);
+  pausebutton.attachClick(controlcounter, 2);
+  stopbutton.attachClick(controlcounter, 3);
+
   Serial.begin(115200);
   Serial.println("Start LTC Counter");
   ltcTimer_freq = (1.0f / (2 * 80 * (fps ))) * 1000000.0f - 0.125f;// -0.125: make it a tiny bit faster than needed to allow syncing
@@ -272,6 +411,7 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(syncPin), &startLtc, RISING);
   NVIC_SET_PRIORITY(87, 0); //set GPIO-INT-Priority for Pin 4 / PortA
   display.clear();
+
 }
 
 void displayTime(ltcframe_t *ltc) {
@@ -281,28 +421,70 @@ void displayTime(ltcframe_t *ltc) {
   data[1] = display.encodeDigit(((int) (ltc->data >> 32) & 0x0f));
   data[2] = display.encodeDigit(((int) (ltc->data >> 24) & 0x07));
   data[3] = display.encodeDigit(((int) (ltc->data >> 16) & 0x0f));
+  if(colonVisible){
+  data[1] = data[1] + SEG_DP;
+  }
+  colonVisible = !colonVisible;
   display.setSegments(data);
 }
 
-void calcTime(ltcframe_t *ltc) {
-  time_t temptime;
-  int t;
-  mode=1;
-  switch (mode) {
-  case 1:
-    temptime = timedestination-now(); //Countdown auf Zeit
-    break;
-  case 2:
-    temptime = now()-timedestination; //Countdown auf Zeit
-    break;
-  default:
-    ltc1.setsecond(ltc, second());
-    ltc1.setminute(ltc, minute());
-    ltc1.sethour(ltc, hour());
-    break; // Wird nicht benötigt, wenn Statement(s) vorhanden sind
+void setmode(byte mode) {
+  countermode = mode;
+  switch (countermode) {
+    case 0:
+      Serial.println("Clockmode");
+      break;
+    case 1:
+      Serial.println("Countdown auf def. Zeit");
+      break;
+    case 2:
+      Serial.println("Countdown auf 0");
+      break;
+    case 3:
+      Serial.println("Countup auf def. Zeit");
+      break;
+    case 4:
+      Serial.println("Countup auf 99");
+      break;
   }
-  
-  Serial.printf("TimeIST : %02d:%02d:%02d\n", hour(), minute(), second());
-  Serial.printf("TimeSOLL: %02d:%02d:%02d\n", hour(timedestination), minute(timedestination), second(timedestination));
-  Serial.printf("TimeDIFF: %02d:%02d:%02d\n", hour(temptime), minute(temptime), second(temptime));
+}
+
+void controlcounter(byte counterrunmode) {
+  Serial.printf("Runmode-In: %d\n", counterrunmode);
+  switch (counterrunmode) {
+    case 1:
+      if (counterpaused) {
+        counterpaused = false;
+        timestart = now() - timepaused;
+        if (countermode == 2) {
+          timedestination = timedestination + timestart;
+        }
+      } else {
+        timestart = now();
+      }
+      lastsecond = second();
+      counterrun = true;
+      Serial.println("START");
+      break;
+    case 2:
+      if (!counterpaused) {
+        counterpaused = true;
+        timepaused = now();
+      }
+      //timestart = now();
+      //lastsecond = second();
+      counterrun = false;
+      Serial.println("PAUSE");
+      break;
+    case 3:
+      //timestart = now();
+      //lastsecond = second();
+      counterrun = false;
+      Serial.println("STOP");
+      break;
+  }
+  Serial.printf("Runmode: %d -Paused:%d -Timestart:%d\n", counterrun, counterpaused, timestart);
+}
+void clocksetup() {
+
 }
