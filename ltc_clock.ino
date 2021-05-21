@@ -15,8 +15,7 @@
 
 #define USE_LTC_INPUT //comment-out for generation only
 float fps = 25;
-const int ltcPin = 0;
-const int ltcInvPin = 1;
+const int ltcPin = 2;
 const int syncPin = 33;
 const int syncInterval = 30;
 elapsedMillis lastSync;
@@ -38,12 +37,23 @@ const int stopPin = 11;
 const int clockLedPin = 12;
 const int upLedPin = 13;
 const int downLedPin = 15;
-const int hourLedPin = 16;
-const int minuteLedPin = 17;
-const int secondLedPin = 20;
-const int startLedPin = 21;
-const int pauseLedPin = 22;
+
+const int startLedPin = 16;
+const int pauseLedPin = 17;
 const int stopLedPin = 23;
+
+const int hourLedPin = 20;
+const int minuteLedPin = 21;
+const int secondLedPin = 22;
+
+//struct OUT from slave to master
+typedef struct {
+  byte btn;
+  byte led;
+  char name[50];
+}
+B_t;
+B_t btn[9];
 
 #include <TimeLib.h>
 #include <TM1637Display.h>
@@ -70,6 +80,7 @@ OneButton stopbutton(stopPin);  // 10 ms debounce
 
 #define CLK 19
 #define DIO 18
+#define NUMBEROFDIGITS 6
 
 #ifdef USE_LTC_INPUT
 /*
@@ -98,7 +109,7 @@ time_t timediff;
 time_t timestart;
 time_t timepaused;
 
-TM1637Display display(CLK, DIO);
+TM1637Display display(CLK, DIO, 2, NUMBEROFDIGITS);
 
 volatile int clkCnt = 0;
 ltcframe_t ltc;
@@ -106,8 +117,8 @@ ltcframe_t ltccount;
 
 float ltcTimer_freq;
 
-uint8_t displayBlank[] = { 0x00, 0x00, 0x00, 0x00 };
-uint8_t displayFull[] = { 0xff, 0xff, 0xff, 0xff };
+uint8_t displayBlank[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+uint8_t displayFull[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
 
 time_t getTeensy3Time()
 {
@@ -138,7 +149,6 @@ void genLtc() {
   if ( (bitval == 1) || ( (bitval == 0) && (clkCnt & 0x01) ) == 0) {
     state = !state; // toggle state
     digitalWriteFast(ltcPin, state);
-    digitalWriteFast(ltcInvPin, !state);
   }
 
 }
@@ -351,7 +361,20 @@ void setup() {
   setSyncInterval(syncInterval);
   pinMode(syncPin, OUTPUT);
   pinMode(ltcPin, OUTPUT);
-  pinMode(ltcInvPin, OUTPUT);
+
+  btn[0].led=clockLedPin;
+  btn[1].led=upLedPin;
+  btn[2].led=downLedPin;
+  btn[3].led=hourLedPin;
+  btn[4].led=minuteLedPin;
+  btn[5].led=secondLedPin;
+  btn[6].led=startLedPin;
+  btn[7].led=pauseLedPin;
+  btn[8].led=stopLedPin;
+
+  for(byte i=0;i<9;i++){
+    pinMode(btn[i].led, OUTPUT);
+  }
 
   clockbutton.attachClick(setmode, 0);
 
@@ -381,6 +404,7 @@ void setup() {
   stopbutton.attachClick(controlcounter, 3);
 
   Serial.begin(115200);
+  delay(500);
   Serial.println("Start LTC Counter");
   ltcTimer_freq = (1.0f / (2 * 80 * (fps ))) * 1000000.0f - 0.125f;// -0.125: make it a tiny bit faster than needed to allow syncing
   Serial.printf("ltcTimer_freq: %f\n", ltcTimer_freq);
@@ -412,19 +436,27 @@ void setup() {
   NVIC_SET_PRIORITY(87, 0); //set GPIO-INT-Priority for Pin 4 / PortA
   display.clear();
 
+  for(byte i=0;i<9;i++){
+    digitalWrite(btn[i].led,HIGH);
+    delay(100);
+  }
+  delay(500);
+  for(byte i=0;i<9;i++){
+    digitalWrite(btn[i].led,LOW);
+    delay(100);
+  }
 }
 
 void displayTime(ltcframe_t *ltc) {
-  uint8_t data[] = { 0xff, 0xff, 0xff, 0xff };
+  uint8_t data[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
   //Serial.printf("Display: %02d\n", ltc1.hour(ltc));
-  data[0] = display.encodeDigit(((int) (ltc->data >> 40) & 0x07));
-  data[1] = display.encodeDigit(((int) (ltc->data >> 32) & 0x0f));
-  data[2] = display.encodeDigit(((int) (ltc->data >> 24) & 0x07));
-  data[3] = display.encodeDigit(((int) (ltc->data >> 16) & 0x0f));
-  if(colonVisible){
-  data[1] = data[1] + SEG_DP;
-  }
-  colonVisible = !colonVisible;
+  data[0] = display.encodeDigit(((int) (ltc->data >> 56) & 0x07));
+  data[1] = display.encodeDigit(((int) (ltc->data >> 48) & 0x0f));
+  data[2] = display.encodeDigit(((int) (ltc->data >> 40) & 0x07));
+  data[3] = display.encodeDigit(((int) (ltc->data >> 32) & 0x0f));
+  data[4] = display.encodeDigit(((int) (ltc->data >> 24) & 0x07));
+  data[5] = display.encodeDigit(((int) (ltc->data >> 16) & 0x0f));
+  display.setColon(!display.getColon());
   display.setSegments(data);
 }
 
