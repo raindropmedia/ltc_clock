@@ -48,7 +48,7 @@ const int secondLedPin = 22;
 
 //struct OUT from slave to master
 typedef struct {
-  byte btn;
+  byte key;
   byte led;
   char name[50];
 }
@@ -329,7 +329,7 @@ void loop() {
       Serial.printf("OutLTC  : %02d:%02d:%02d.%02d\n", ltc1.hour(&ltc), ltc1.minute(&ltc), ltc1.second(&ltc), ltc1.frame(&ltc));
       //Serial.printf("timeDIFF: %02d:%02d:%02d\n", hour(timediff), minute(timediff), second(timediff));
     }
-    clockbutton.tick();
+    /*clockbutton.tick();
     upbutton.tick();
     downbutton.tick();
     hourbutton.tick();
@@ -337,8 +337,19 @@ void loop() {
     secondbutton.tick();
     startbutton.tick();
     pausebutton.tick();
-    stopbutton.tick();
-
+    stopbutton.tick();*/
+    
+    byte keycode = display.getKeyCode();
+    if(keycode!=0){
+      Serial.printf("Keycode  : %d\n", keycode);
+      for(byte i=0;i<9;i++){
+        if(keycode==btn[i].key){
+          digitalWrite(btn[i].led,HIGH);
+        }else{
+          digitalWrite(btn[i].led,LOW);
+        }
+      }
+    }
   }
 }
 
@@ -361,6 +372,16 @@ void setup() {
   setSyncInterval(syncInterval);
   pinMode(syncPin, OUTPUT);
   pinMode(ltcPin, OUTPUT);
+
+  btn[0].key=15;
+  btn[1].key=7;
+  btn[2].key=11;
+  btn[3].key=5;
+  btn[4].key=9;
+  btn[5].key=1;
+  btn[6].key=4;
+  btn[7].key=14;
+  btn[8].key=10;
 
   btn[0].led=clockLedPin;
   btn[1].led=upLedPin;
