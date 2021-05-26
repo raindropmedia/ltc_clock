@@ -69,16 +69,21 @@ void startLtc() {
           lastsecond = second();
           t = fps;
         }
-        if (now() > timedestination-10) {
-          displayBlink=true;
+        if (now() >= timedestination - 10) {
+          displayBlink = true;
         }
-        if (now() > timedestination) {
+        if (now() >= timedestination) {
           counterrun = false;
           t = 0;
+          btn[6].ledstate = 0;
+          btn[7].ledstate = 0;
+          btn[8].ledstate = 2;
+          displayBlink = false;
           Serial.println("Countdown erreicht!");
           break;
         }
         timediff = timedestination - now(); //Countdown auf def. Zeit
+        //Serial.printf("Start: %d Diff:%d Dest:%d Now:%d\n", timestart, timediff, timedestination, now());
         t--;
       }
       break;
@@ -88,14 +93,18 @@ void startLtc() {
           lastsecond = second();
           t = fps;
         }
-        timediff = timestart - (now() - timedestination); //Countdown auf 0
+        timediff =  timedestination - now(); //Countdown auf 0
         if (timediff < 10) {
-          displayBlink=true;
+          displayBlink = true;
         }
         if (timediff < 0) {
           timediff = 0;
           t = 0;
           counterrun = false;
+          btn[6].ledstate = 0;
+          btn[7].ledstate = 0;
+          btn[8].ledstate = 2;
+          displayBlink = false;
           Serial.println("Countdown auf 0 erreicht!");
           break;
         }
@@ -110,16 +119,21 @@ void startLtc() {
           lastsecond = second();
           t = 0;
         }
-        if (now() > timedestination-10) {
-          displayBlink=true;
+        if (now() >= timedestination - 10) {
+          displayBlink = true;
         }
-        if (now() > timedestination) {
+        if (now() >= timedestination) {
           counterrun = false;
           timediff++;
+          btn[6].ledstate = 0;
+          btn[7].ledstate = 0;
+          btn[8].ledstate = 2;
+          displayBlink = false;
           Serial.println("Countup erreicht!");
           break;
         }
         timediff = now() - timestart; //Countup auf def. Zeit
+        //Serial.printf("Start: %d Diff:%d Dest:%d Now:%d\n", timestart, timediff, timedestination, now());
       }
       if (t >= (int) fps) t = 0;
       break;
@@ -133,6 +147,10 @@ void startLtc() {
         if (timediff >= (99 * 3600 + 59 * 60 + 59)) {
           counterrun = false;
           t = 0;
+          btn[6].ledstate = 0;
+          btn[7].ledstate = 0;
+          btn[8].ledstate = 2;
+          displayBlink = false;
           Serial.println("Countup 99 erreicht!");
           break;
         }

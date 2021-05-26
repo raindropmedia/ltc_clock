@@ -14,16 +14,23 @@
 */
 
 #define USE_LTC_INPUT //comment-out for generation only
+#define DEFAULT_DISPLAYBRIGHTNESS 7
+#define DEFAULT_BUZZERACTIVE 1
+#define CONFIG_VERSION "v1"
+// Tell it where to store your config data in EEPROM
+#define CONFIG_START 32
+
 float fps = 25;
 const int ltcPin = 2;
 const int syncPin = 33;
 const int syncInterval = 30;
-elapsedMillis lastSync, lastDisplayUpdate, lastBtnLedUpdate, lastBtnLedBlink;
+elapsedMillis lastSync, lastDisplayUpdate, lastBtnLedUpdate, lastBtnLedBlink, lastColonBlink, lastDebugOutput;
 bool initsync, counterrun, counterpaused, externsync, displayBlink;
 bool colonVisible = false;
+bool reversecountmode;
+bool showOutput, showSetup;
 float infps;
-byte countermode, lastsecond;
-byte displayBrightness = 7;
+byte countermode, lastsecond, setupmenu;
 
 const int clockLedPin = 12;
 const int upLedPin = 13;
@@ -37,6 +44,8 @@ const int hourLedPin = 20;
 const int minuteLedPin = 21;
 const int secondLedPin = 22;
 
+const int buzzerPin = 11;
+
 enum BtnName {
   BTNCLOCK = 15,
   BTNUP = 7,
@@ -46,7 +55,10 @@ enum BtnName {
   BTNSECOND = 1,
   BTNSTART = 4,
   BTNPAUSE = 14,
-  BTNSTOP = 10
+  BTNSTOP = 10,
+  MENUNEXT = 1,
+  MENUUP = 2,
+  MENUDOWN = 3
 };
 
 //struct OUT from slave to master
@@ -59,9 +71,21 @@ typedef struct {
 B_t;
 B_t btn[9];
 
+//struct OUT from slave to master
+struct StoreStruct {
+  char version[4];
+  bool buzzerActive;
+  byte brightness;
+} storage = {
+  CONFIG_VERSION,
+  DEFAULT_BUZZERACTIVE,
+  DEFAULT_DISPLAYBRIGHTNESS
+};
+#include <Time.h>
 #include <TimeLib.h>
 #include <TM1637Display.h>
 #include "OneButton.h"
+#include <EEPROM.h>
 
 #define SEG_A   0b00000001
 #define SEG_B   0b00000010
@@ -102,6 +126,7 @@ time_t timedestination;
 time_t timediff;
 time_t timestart;
 time_t timepaused;
+time_t countertime[5];
 
 TM1637Display display(CLK, DIO, 2, NUMBEROFDIGITS);
 
@@ -113,10 +138,26 @@ float ltcTimer_freq;
 
 uint8_t displayBlank[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 uint8_t displayFull[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+uint8_t displayMenuBuzzer[] = { 0x6D, 0x73, 0x00, 0x00, 0x00, 0x00};
+uint8_t displayMenuBright[] = { 0x7C, 0x50, 0x00, 0x00, 0x00, 0x00 };
+
 
 time_t getTeensy3Time()
 {
   return Teensy3Clock.get();
+}
+
+void loadConfig() {
+  // To make sure there are settings, and they are YOURS!
+  // If nothing is found it will use the default settings.
+  if (EEPROM.read(CONFIG_START + 0) == CONFIG_VERSION[0] &&
+      EEPROM.read(CONFIG_START + 1) == CONFIG_VERSION[1] &&
+      EEPROM.read(CONFIG_START + 2) == CONFIG_VERSION[2])
+    EEPROM.get( CONFIG_START, storage );
+}
+
+void saveConfig() {
+  EEPROM.put(CONFIG_START, storage);
 }
 
 //#########################################
@@ -125,23 +166,25 @@ time_t getTeensy3Time()
 
 void setup() {
   delay(2000);
+  loadConfig();
 #ifdef USE_LTC_INPUT
   AudioMemory(4);
 #endif
-  display.setBrightness(displayBrightness);
+  display.setBrightness(storage.brightness);
   // All segments on
   display.setSegments(displayFull);
 
-  Teensy3Clock.set(1 * 3600 + 33 * 60 + 0 );
+  //Teensy3Clock.set(1 * 3600 + 33 * 60 + 0 );
   //setTime(10 * 3600 + 0 * 60 + 0 );
 
-  timedestination = (0 * 3600 + 10 * 60 + 30 );
+  //timedestination = (0 * 3600 + 10 * 60 + 30 );
 
   setTime(0);
   setSyncProvider(getTeensy3Time);
   setSyncInterval(syncInterval);
   pinMode(syncPin, OUTPUT);
   pinMode(ltcPin, OUTPUT);
+  pinMode(buzzerPin, OUTPUT);
 
   btn[0].key = BTNCLOCK;
   btn[1].key = BTNUP;
@@ -204,7 +247,9 @@ void setup() {
     digitalWrite(btn[i].ledpin, HIGH);
     delay(100);
   }
+  digitalWrite(buzzerPin, HIGH);
   delay(500);
+  digitalWrite(buzzerPin, LOW);
   for (byte i = 0; i < 9; i++) {
     digitalWrite(btn[i].ledpin, LOW);
     delay(100);
@@ -251,89 +296,169 @@ void loop() {
   }
 }
 
+void setuptime(byte btnnr) {
+  int updateval = 1;
+  if (reversecountmode) {
+    updateval = -1;
+  }
+  if (countermode < 4) {
+    switch (btnnr) {
+      case 0:
+        countertime[countermode] = countertime[countermode] + (updateval * 3600);
+        break;
+      case 1:
+        countertime[countermode] = countertime[countermode] + (updateval * 60);
+        break;
+      case 2:
+        countertime[countermode] = countertime[countermode] + (updateval);
+        break;
+    }
+  }
+  //Serial.print("countertime: ");
+  //Serial.println(countertime[countermode]);
+}
+
 void setmode(byte mode) {
   countermode = mode;
   btn[0].ledstate = 0;
   btn[1].ledstate = 0;
   btn[2].ledstate = 0;
+  btn[6].ledstate = 0;
+  btn[7].ledstate = 0;
+  btn[8].ledstate = 1;
   counterpaused = false;
   counterrun = false;
+  displayBlink = false;
+  showSetup = false;
   switch (countermode) {
     case 0:
       Serial.println("Clockmode");
       btn[0].ledstate = 1;
+      btn[8].ledstate = 0;
+      showOutput = true;
       //displayBlink=true;
       break;
     case 1:
       Serial.println("Countdown auf def. Zeit");
       btn[2].ledstate = 2;
+      showOutput = false;
       break;
     case 2:
       Serial.println("Countdown auf 0");
       btn[2].ledstate = 1;
+      showOutput = false;
       break;
     case 3:
       Serial.println("Countup auf def. Zeit");
       btn[1].ledstate = 2;
+      showOutput = false;
       break;
     case 4:
       Serial.println("Countup auf 99");
       btn[1].ledstate = 1;
-      ltc.data = (uint64_t) 0; //<- place your initial data here
+      showOutput = false;
       break;
     case 5:
       Serial.println("Setup");
       btn[0].ledstate = 2;
+      showSetup = true;
       break;
   }
 }
 
 void controlcounter(byte counterrunmode) {
   Serial.printf("Runmode-In: %d\n", counterrunmode);
-  btn[6].ledstate = 0;
-  btn[7].ledstate = 0;
-  btn[8].ledstate = 0;
-  if (countermode != 0) {
+  if (countermode != 0 && countermode != 5) {
     switch (counterrunmode) {
       case 1:
-        btn[6].ledstate = 1;
-        if (counterpaused) {
-          counterpaused = false;
-          timestart = timestart + (now() - timepaused);
-          if (countermode == 2) {
-            timedestination = timedestination + timestart;
+        if (counterrun == false) {
+          btn[6].ledstate = 1;
+          btn[7].ledstate = 0;
+          btn[8].ledstate = 0;
+          showOutput = true;
+          if (counterpaused) {
+            counterpaused = false;
+            timestart = timestart + (now() - timepaused);
+            timedestination = timedestination + (now() - timepaused);
+          } else {
+            timestart = now();
+            if (countermode == 1) {
+              tmElements_t tm;
+              breakTime(timestart, tm);
+              tm.Hour = hour(countertime[countermode]);
+              tm.Minute = minute(countertime[countermode]);
+              tm.Second = second(countertime[countermode]);
+              timedestination = makeTime(tm);
+              //breakTime(timestart, temptm);
+              //temptm->tm_year = (int)year(timestart);
+              //timedestination
+            } else {
+              timedestination = timestart + countertime[countermode];
+            }
           }
-        } else {
-          timestart = now();
+          lastsecond = second();
+          counterrun = true;
+          Serial.println("START");
+          Serial.printf("StartTime  : %d\n", timestart);
         }
-        lastsecond = second();
-        counterrun = true;
-        Serial.println("START");
-        Serial.printf("StartTime  : %d\n", timestart);
         break;
       case 2:
-        btn[7].ledstate = 1;
-        if (!counterpaused) {
+        if (!counterpaused && counterrun == true) {
+          btn[7].ledstate = 1;
+          btn[6].ledstate = 2;
+          btn[8].ledstate = 0;
+          showOutput = true;
           counterpaused = true;
           timepaused = now();
+          counterrun = false;
         }
         //timestart = now();
         //lastsecond = second();
-        counterrun = false;
         Serial.println("PAUSE");
         Serial.printf("PauseTime  : %d\n", timepaused);
         break;
       case 3:
+        btn[6].ledstate = 0;
+        btn[7].ledstate = 0;
         btn[8].ledstate = 1;
         //timestart = now();
         //lastsecond = second();
+        showOutput = false;
         counterrun = false;
+        counterpaused = false;
+        displayBlink = false;
+        timedestination = countertime[countermode];
         Serial.println("STOP");
         break;
     }
-    Serial.printf("Countermode: %d -Runmode: %d -Paused:%d -Timestart:%d -Timepaused:%d -NOW:%d\n", countermode, counterrun, counterpaused, timestart, timepaused, now());
+    Serial.printf("Countermode: %d -Runmode: %s -Paused:%s -Timestart:%d -Timedestination:%d -Timepaused:%d -NOW:%d\n", countermode, counterrun ? "true" : "false", counterpaused ? "true" : "false", timestart, timedestination, timepaused, now());
   }
 }
-void clocksetup() {
-
+void clocksetup(byte menuctrl) {
+  switch (menuctrl) {
+    case MENUNEXT:
+      setupmenu++;
+      if (setupmenu >= 2) {
+        setupmenu = 0;
+      }
+      break;
+    case MENUUP:
+      if (setupmenu == 0) {
+        storage.buzzerActive = !storage.buzzerActive;
+      } else if (setupmenu == 1) {
+        if (storage.brightness < 7) {
+          storage.brightness++;
+        }
+      }
+      break;
+    case MENUDOWN:
+      if (setupmenu == 0) {
+        storage.buzzerActive = !storage.buzzerActive;
+      } else if (setupmenu == 1) {
+        if (storage.brightness > 0) {
+          storage.brightness--;
+        }
+      }
+      break;
+  }
 }
