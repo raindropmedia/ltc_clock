@@ -1,11 +1,12 @@
 void updateDisplay(ltcframe_t *ltc) {
   if (lastDisplayUpdate > 250) {      // "sincePrint" auto-increases
     lastDisplayUpdate = 0;
-    uint8_t data[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
-
+    uint8_t data[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
     if (showSetup) {
       if (setupmenu == 0) {
-        memcpy(data, displayMenuBuzzer, sizeof(displayMenuBuzzer));
+        //memcpy(data, displayMenuBuzzer, sizeof(displayMenuBuzzer));
+        data[0] = 0x6D; //S
+        data[1] = 0x73; //P
         if (storage.buzzerActive) {
           //On
           data[4] = 0x3f;
@@ -18,8 +19,22 @@ void updateDisplay(ltcframe_t *ltc) {
         }
 
       } else if (setupmenu == 1) {
-        memcpy(data, displayMenuBright, sizeof(displayMenuBright));
+        //memcpy(data, displayMenuBright, sizeof(displayMenuBright));
+        data[0] = 0x7C; //b
+        data[1] = 0x50; //r
         data[5] = display.encodeDigit((int) (storage.brightness));
+      } else if (setupmenu == 2) {
+        //memcpy(data, displayMenuBright, sizeof(displayMenuBright));
+        data[0] = 0x71; //F
+        data[1] = 0x50; //r
+        data[4] = display.encodeDigit((int) (((int)storage.fps / 10) % 10));
+        data[5] = display.encodeDigit((int) ((int)storage.fps % 10));
+      } else if (setupmenu == 3) {
+        //memcpy(data, displayMenuBright, sizeof(displayMenuBright));
+        data[0] = 0x71; //F
+        data[1] = 0x38; //L
+        data[4] = display.encodeDigit((int) ((storage.flash / 10) % 10));
+        data[5] = display.encodeDigit((int) (storage.flash % 10));
       }
 
     } else if (showOutput) {
@@ -55,7 +70,7 @@ void updateDisplay(ltcframe_t *ltc) {
     display.setSegments(data);
     if (lastDebugOutput > 1000) {
       lastDebugOutput = 0;
-      Serial.printf("OutLTC  : %02d:%02d:%02d.%02d\n", ltc1.hour(ltc), ltc1.minute(ltc), ltc1.second(ltc), ltc1.frame(ltc));
+      //Serial.printf("OutLTC  : %02d:%02d:%02d.%02d\n", ltc1.hour(ltc), ltc1.minute(ltc), ltc1.second(ltc), ltc1.frame(ltc));
     }
   }
 }

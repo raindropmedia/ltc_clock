@@ -104,6 +104,7 @@ void buttonLongClick(byte keycode) {
     case BTNCLOCK:
       if (countermode == 5) {
         saveConfig();
+        setfpstimer();
         setmode(0);
       } else {
         setmode(5);

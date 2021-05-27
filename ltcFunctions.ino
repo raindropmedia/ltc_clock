@@ -13,10 +13,18 @@ void genLtc() {
   ltcframe_t ltct;
   ltct = ltc;
 
-  if (bitcount < 64) {
-    bitval = (int) (ltct.data >> bitcount) & 0x01;
+  if (reverseltc) {
+    if (bitcount < 16) {
+      bitval = (int) (ltct.sync >> bitcount) & 0x01;
+    } else {
+      bitval = (int) (ltct.data >> (bitcount - 16)) & 0x01; 
+    }
   } else {
-    bitval = (int) (ltct.sync >> (bitcount - 64)) & 0x01; //backward
+    if (bitcount < 64) {
+      bitval = (int) (ltct.data >> bitcount) & 0x01;
+    } else {
+      bitval = (int) (ltct.sync >> (bitcount - 64)) & 0x01; //backward
+    }
   }
 
   if ( (bitval == 1) || ( (bitval == 0) && (clkCnt & 0x01) ) == 0) {
@@ -67,9 +75,9 @@ void startLtc() {
       if (counterrun) {
         if (lastsecond != second()) {
           lastsecond = second();
-          t = fps;
+          t = storage.fps;
         }
-        if (now() >= timedestination - 10) {
+        if (now() >= timedestination - storage.flash) {
           displayBlink = true;
         }
         if (now() >= timedestination) {
@@ -91,10 +99,10 @@ void startLtc() {
       if (counterrun) {
         if (lastsecond != second()) {
           lastsecond = second();
-          t = fps;
+          t = storage.fps;
         }
         timediff =  timedestination - now(); //Countdown auf 0
-        if (timediff < 10) {
+        if (timediff < storage.flash) {
           displayBlink = true;
         }
         if (timediff < 0) {
@@ -119,7 +127,7 @@ void startLtc() {
           lastsecond = second();
           t = 0;
         }
-        if (now() >= timedestination - 10) {
+        if (now() >= timedestination - storage.flash) {
           displayBlink = true;
         }
         if (now() >= timedestination) {
@@ -135,7 +143,7 @@ void startLtc() {
         timediff = now() - timestart; //Countup auf def. Zeit
         //Serial.printf("Start: %d Diff:%d Dest:%d Now:%d\n", timestart, timediff, timedestination, now());
       }
-      if (t >= (int) fps) t = 0;
+      if (t >= (int) storage.fps) t = 0;
       break;
     case 4:
       if (counterrun) {
@@ -156,7 +164,7 @@ void startLtc() {
         }
         timediff = now() - timestart; //Countup von 0
       }
-      if (t >= (int) fps) t = 0;
+      if (t >= (int) storage.fps) t = 0;
       break;
     default:
       t++;
@@ -165,7 +173,7 @@ void startLtc() {
         t = 0;
       }
       timediff = (hour() * 3600 + minute() * 60 + second() );
-      if (t >= (int) fps) t = 0;
+      if (t >= (int) storage.fps) t = 0;
       break; // Wird nicht benötigt, wenn Statement(s) vorhanden sind
   }
   ltc1.setframe(&ltctemp, t);
@@ -176,14 +184,13 @@ void startLtc() {
 
   //set parity:
   int parity = (!getParity(ltctemp.data)) & 0x01;
-  if ((int) fps == 25) {
+  if ((int) storage.fps == 25) {
     ltctemp.data |= (uint64_t) parity << 59;
   } else {
     ltctemp.data |= (uint64_t) parity << 27;
   }
 
   ltc = ltctemp;
-  //Serial.printf("Out1: %02d:%02d:%02d.%02d\n", ltc1.hour(&ltc), ltc1.minute(&ltc), ltc1.second(&ltc), ltc1.frame(&ltc));
   //Serial.printf("OutLTC  : %02d:%02d:%02d.%02d\n", ltc1.hour(&ltc), ltc1.minute(&ltc), ltc1.second(&ltc), ltc1.frame(&ltc));
 }
 

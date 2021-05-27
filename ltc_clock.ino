@@ -16,16 +16,18 @@
 #define USE_LTC_INPUT //comment-out for generation only
 #define DEFAULT_DISPLAYBRIGHTNESS 7
 #define DEFAULT_BUZZERACTIVE 1
-#define CONFIG_VERSION "v1"
+#define DEFAULT_FPS 25
+#define DEFAULT_FLASH 10
+#define CONFIG_VERSION "v2"
 // Tell it where to store your config data in EEPROM
 #define CONFIG_START 32
 
-float fps = 25;
+//float fps = 25;
 const int ltcPin = 2;
 const int syncPin = 33;
 const int syncInterval = 30;
 elapsedMillis lastSync, lastDisplayUpdate, lastBtnLedUpdate, lastBtnLedBlink, lastColonBlink, lastDebugOutput;
-bool initsync, counterrun, counterpaused, externsync, displayBlink;
+bool initsync, counterrun, counterpaused, externsync, displayBlink, reverseltc;
 bool colonVisible = false;
 bool reversecountmode;
 bool showOutput, showSetup;
@@ -76,10 +78,14 @@ struct StoreStruct {
   char version[4];
   bool buzzerActive;
   byte brightness;
+  float fps;
+  byte flash;
 } storage = {
   CONFIG_VERSION,
   DEFAULT_BUZZERACTIVE,
-  DEFAULT_DISPLAYBRIGHTNESS
+  DEFAULT_DISPLAYBRIGHTNESS,
+  DEFAULT_FPS,
+  DEFAULT_FLASH
 };
 #include <Time.h>
 #include <TimeLib.h>
@@ -138,9 +144,6 @@ float ltcTimer_freq;
 
 uint8_t displayBlank[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 uint8_t displayFull[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
-uint8_t displayMenuBuzzer[] = { 0x6D, 0x73, 0x00, 0x00, 0x00, 0x00};
-uint8_t displayMenuBright[] = { 0x7C, 0x50, 0x00, 0x00, 0x00, 0x00 };
-
 
 time_t getTeensy3Time()
 {
@@ -213,14 +216,12 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println("Start LTC Counter");
-  ltcTimer_freq = (1.0f / (2 * 80 * (fps ))) * 1000000.0f - 0.125f;// -0.125: make it a tiny bit faster than needed to allow syncing
-  Serial.printf("ltcTimer_freq: %f\n", ltcTimer_freq);
-
+  
   initLtcData();
   //set frame number to last frame to force roll-over with new second()
   ltc.data &= 0xf0f0f0f0f0f0fcf0ULL; //delete all dynamic data in frame
   int t, t10;
-  t = fps; //t=30;
+  t = storage.fps; //t=30;
   Serial.printf("t: %d\n", t);
   t10 = t / 10; //t10=3
   Serial.printf("t10: %d\n", t10);
@@ -231,18 +232,10 @@ void setup() {
   Serial.printf("t - t10 * 10: %d\n", (t - t10 * 10));
   Serial.printf("In: %02d:%02d:%02d.%02d\n", ltc1.hour(&ltc), ltc1.minute(&ltc), ltc1.second(&ltc), ltc1.frame(&ltc));
   //now wait for seconds-change
-  int secs = second();
-  while (secs == second()) {
-    ;
-  }
-
-  //start timer and pin-interrupt:
-  fpsTimer.begin(&genFpsSync, (1.0f / (2 * fps)) * 1000000.0f);
-  fpsTimer.priority(0);
-  attachInterrupt(digitalPinToInterrupt(syncPin), &startLtc, RISING);
-  NVIC_SET_PRIORITY(87, 0); //set GPIO-INT-Priority for Pin 4 / PortA
+  
+  setfpstimer();
+  
   display.clear();
-
   for (byte i = 0; i < 9; i++) {
     digitalWrite(btn[i].ledpin, HIGH);
     delay(100);
@@ -255,6 +248,20 @@ void setup() {
     delay(100);
   }
   setmode(0);
+}
+
+void setfpstimer(){
+  ltcTimer_freq = (1.0f / (2 * 80 * (storage.fps ))) * 1000000.0f - 0.125f;// -0.125: make it a tiny bit faster than needed to allow syncing
+  Serial.printf("ltcTimer_freq: %f\n", ltcTimer_freq);
+  int secs = second();
+  while (secs == second()) {
+    ;
+  }
+  //start timer and pin-interrupt:
+  fpsTimer.begin(&genFpsSync, (1.0f / (2 * storage.fps)) * 1000000.0f);
+  fpsTimer.priority(0);
+  attachInterrupt(digitalPinToInterrupt(syncPin), &startLtc, RISING);
+  NVIC_SET_PRIORITY(87, 0); //set GPIO-INT-Priority for Pin 4 / PortA
 }
 
 //########################################
@@ -276,7 +283,7 @@ void loop() {
           if (countermode == 0) {
             ltc.data = ltcframe.data;
           }
-          ltc1.setframe(&ltc, fps);
+          ltc1.setframe(&ltc, storage.fps);
           Serial.println("Sync mit Input LTC");
           Serial.printf("SyncTime: %02d:%02d:%02d.%02d - Fps:%f\n", ltc1.hour(&ltcframe), ltc1.minute(&ltcframe), ltc1.second(&ltcframe), ltc1.frame(&ltcframe), infps + 1);
           Serial.printf("SyncedTime: %02d:%02d:%02d.%02d\n", ltc1.hour(&ltc), ltc1.minute(&ltc), ltc1.second(&ltc), ltc1.frame(&ltc));
@@ -330,6 +337,7 @@ void setmode(byte mode) {
   counterrun = false;
   displayBlink = false;
   showSetup = false;
+  reverseltc=false;
   switch (countermode) {
     case 0:
       Serial.println("Clockmode");
@@ -342,11 +350,13 @@ void setmode(byte mode) {
       Serial.println("Countdown auf def. Zeit");
       btn[2].ledstate = 2;
       showOutput = false;
+      reverseltc=true;
       break;
     case 2:
       Serial.println("Countdown auf 0");
       btn[2].ledstate = 1;
       showOutput = false;
+      reverseltc=true;
       break;
     case 3:
       Serial.println("Countup auf def. Zeit");
@@ -438,7 +448,7 @@ void clocksetup(byte menuctrl) {
   switch (menuctrl) {
     case MENUNEXT:
       setupmenu++;
-      if (setupmenu >= 2) {
+      if (setupmenu >= 4) {
         setupmenu = 0;
       }
       break;
@@ -449,6 +459,14 @@ void clocksetup(byte menuctrl) {
         if (storage.brightness < 7) {
           storage.brightness++;
         }
+      }else if (setupmenu == 2) {
+        if (storage.fps == 25) {
+          storage.fps=30;
+        }
+      }else if (setupmenu == 3) {
+        if (storage.flash < 10) {
+          storage.flash++;
+        }
       }
       break;
     case MENUDOWN:
@@ -457,6 +475,15 @@ void clocksetup(byte menuctrl) {
       } else if (setupmenu == 1) {
         if (storage.brightness > 0) {
           storage.brightness--;
+        }
+      }else if (setupmenu == 2) {
+        if (storage.fps == 30) {
+          storage.fps=25;
+        }
+      }
+      else if (setupmenu == 3) {
+        if (storage.flash > 1) {
+          storage.flash--;
         }
       }
       break;
